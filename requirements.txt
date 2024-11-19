@@ -1,0 +1,9 @@
+"fastapi[standard]"
+uvicorn
+pydantic
+langchain
+sentencepiece
+transformers
+starlette
+uuid
+tqdm

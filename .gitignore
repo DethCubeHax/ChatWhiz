@@ -3,5 +3,5 @@
 backup
 chroma
 data
-*.txt
+text.txt
 *.csv
