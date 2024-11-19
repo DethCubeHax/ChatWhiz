@@ -1,0 +1,7 @@
+*.pyc
+.DS_Store
+backup
+chroma
+data
+*.txt
+*.csv
