@@ -82,8 +82,9 @@ def combine_chunks(chunks: list[Document]):
 
 def add_to_chroma(chunks: list[Document]):
     # Load the existing database.
+    embedding_function = OllamaEmbeddings(model="nomic-embed-text")
     db = Chroma(
-        persist_directory=CHROMA_PATH, embedding_function=OllamaEmbeddings("nomic-embed-text")
+        persist_directory=CHROMA_PATH, embedding_function=embedding_function
     )
 
     # Calculate Page IDs.
