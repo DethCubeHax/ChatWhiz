@@ -1,4 +1,4 @@
-# RAG Experimentation
+# ChatWhiz
 
 This project implements scripts for Retrieval-Augmented Generation (RAG) using the LLaMa tokenizer and the Ollama model for chunking PDF documents, adding them to a Chroma database, and querying that database using FastAPI. I will update it as I learn more about RAG and LLM's
 
