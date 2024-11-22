@@ -10,6 +10,7 @@ from langchain_community.llms.ollama import Ollama
 from get_embedding_function import get_embedding_function
 import random
 import string
+import json
 
 CHROMA_PATH = "chroma"
 PROMPT_TEMPLATE = """
@@ -64,6 +65,13 @@ async def query_rag(request: Request, query: Query, response: Response):
     if message_id not in conversations:
         conversations[message_id] = []
 
+    # Load conversation history from local storage
+    try:
+        with open(f'{message_id}_history.json', 'r') as f:
+            conversations[message_id] = json.load(f)
+    except FileNotFoundError:
+        conversations[message_id] = []
+
     # Prepare the DB.
     embedding_function = get_embedding_function()
     db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
@@ -92,12 +100,17 @@ async def query_rag(request: Request, query: Query, response: Response):
     # Log the question and answer to the conversation history
     conversations[message_id].append(f"Question: {query_text}\nAnswer: {response_text}")
 
+    # Save conversation history to local storage
+    with open(f'{message_id}_history.json', 'w') as f:
+        json.dump(conversations[message_id], f)
+
     # Log the question, answer, and sources to a CSV file
     log_to_csv(query_text, response_text, sources)
 
     # Print the question and response to the terminal
     print(f"Message ID: {message_id}")
-    print(f"Question: {query_text}")
+    print(f"Previous Statements: {history}")
+    print(f"Prompt: {prompt}")
     print(f"Response: {response_text}")
 
     return formatted_response
