@@ -103,13 +103,13 @@ async def query_rag(request: Request, query: Query, response: Response):
     if not results:
         raise HTTPException(status_code=404, detail="No relevant documents found")
 
-    # Construct the history with the most recent two question-answer pairs
+    # Construct the history with the most recent question-answer pairs
     recent_history = history[-4:]
-    formatted_history = "\n".join([
-        f"Question: {recent_history[i]}\nAnswer: {recent_history[i+1]}" 
-        for i in range(0, len(recent_history), 2)
-    ])
-    
+    formatted_history = ""
+    for i in range(0, len(recent_history), 2):
+        if i+1 < len(recent_history):
+            formatted_history += f"Question: {recent_history[i]}\nAnswer: {recent_history[i+1]}\n"
+
     context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
     prompt = prompt_template.format(history=formatted_history, context=context_text, question=query_text, today_date=today_date)
