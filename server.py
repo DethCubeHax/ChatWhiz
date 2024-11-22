@@ -7,7 +7,6 @@ from langchain.vectorstores.chroma import Chroma
 from langchain.prompts import ChatPromptTemplate
 from langchain_community.llms.ollama import Ollama
 from get_embedding_function import get_embedding_function
-from datetime import datetime
 import random
 import string
 import json
@@ -113,8 +112,9 @@ async def query_rag(request: Request, query: Query, response: Response):
     model = Ollama(model="llama3.2")
 
     if history:
-        # Generate improved question
-        previous_questions = "\n".join([entry for entry in history if entry.startswith("Question:")])
+        # Generate improved question with the two most recent history elements
+        recent_history = history[-2:]
+        previous_questions = "\n".join([entry for entry in recent_history if entry.startswith("Question:")])
         improve_prompt_template = ChatPromptTemplate.from_template(IMPROVE_QUESTION_TEMPLATE)
         improve_prompt = improve_prompt_template.format(previous_questions=previous_questions, current_question=query_text)
 
