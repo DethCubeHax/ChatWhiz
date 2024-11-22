@@ -106,7 +106,7 @@ async def query_rag(request: Request, query: Query, response: Response):
     # Construct the history with the most recent two question-answer pairs
     recent_history = history[-4:]
     formatted_history = "\n".join([
-        f"Question {i//2 + 1}: {recent_history[i]}\nAnswer {i//2 + 1}: {recent_history[i+1]}" 
+        f"Question: {recent_history[i]}\nAnswer: {recent_history[i+1]}" 
         for i in range(0, len(recent_history), 2)
     ])
     
