@@ -1,5 +1,4 @@
 import csv
-import argparse
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -71,15 +70,15 @@ async def startup_event():
 @app.post("/query")
 async def query_rag(request: Request, query: Query, response: Response):
     query_text = query.query_text
-    message_id = request.cookies.get('message_id')
+    session_id = request.headers.get('session_id')
 
-    if not message_id:
-        message_id = generate_random_string()
-        response.set_cookie(key='message_id', value=message_id)
+    if not session_id:
+        session_id = generate_random_string()
+        response.headers['session_id'] = session_id
 
     # Initialize conversation history if it doesn't exist
-    if message_id not in conversations:
-        conversations[message_id] = []
+    if session_id not in conversations:
+        conversations[session_id] = []
 
     # Prepare the DB.
     embedding_function = get_embedding_function()
@@ -92,7 +91,7 @@ async def query_rag(request: Request, query: Query, response: Response):
         raise HTTPException(status_code=404, detail="No relevant documents found")
 
     # Get previous conversation history
-    history = conversations[message_id]
+    history = conversations[session_id]
     context_text = "\n\n---\n\n".join(history + [doc.page_content for doc, _score in results])
     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
     prompt = prompt_template.format(history=context_text, question=query_text)
@@ -100,34 +99,34 @@ async def query_rag(request: Request, query: Query, response: Response):
     model = Ollama(model="llama3.2")
     response_text = model.invoke(prompt)
 
-    sources = [doc.metadata.get("id", None) for doc, _score in results]
+    sources = [doc.page_content for doc, _score in results]
     formatted_response = {
         "response": response_text,
         "sources": sources
     }
 
     # Log the question and answer to the conversation history
-    conversations[message_id].append(f"Question: {query_text}\nAnswer: {response_text}")
+    conversations[session_id].append(f"Question: {query_text}\nAnswer: {response_text}")
 
     # Save conversation history to a single JSON file
     save_conversations()
 
     # Log the question, answer, and sources to a CSV file
-    log_to_csv(query_text, response_text, sources)
+    log_to_csv(session_id, query_text, response_text, sources)
 
     # Print the question and response to the terminal
-    print(f"Message ID: {message_id}")
+    print(f"Session ID: {session_id}")
     print(f"Previous Statements: {history}")
     print(f"Prompt: {prompt}")
     print(f"Response: {response_text}")
 
     return formatted_response
 
-def log_to_csv(question, answer, sources):
+def log_to_csv(session_id, question, answer, sources):
     with open('query_log.csv', mode='a', newline='') as file:
         writer = csv.writer(file)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        writer.writerow([now, question, f'"{answer}"', f'"{sources}"'])  # Wrap the answer and sources in double quotes
+        writer.writerow([now, session_id, question, answer] + sources)
 
 if __name__ == "__main__":
     import uvicorn
