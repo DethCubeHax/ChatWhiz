@@ -47,6 +47,7 @@ If the current question seems new and doesn't seem to continue from any previous
 If the current question seems to be related to previous questions, try to bring up context.
 DO NOT DEVIATE TOO MUCH FROM THE ORIGINAL QUESTION. Just add minor additions to the context that might help.
 Do not change pronouns such and person indicators such as My, your, he, she, they, etc.
+DO NOT SKIP ANY WORDS IN THE ORIGINAL QUESTION.
 
 Previous Questions:
 {previous_questions}
