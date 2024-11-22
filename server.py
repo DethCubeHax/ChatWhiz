@@ -38,14 +38,16 @@ Instructions:
 """
 
 IMPROVE_QUESTION_TEMPLATE = """
-Given the following previous questions, improve the current question to make it more specific and contextual.
+Given the following previous questions, improve the current question to make it more specific and contextual. 
+If the current question seems new and doesn't seem to continue from any previous context, just improve the sentence overall.
+If the current question seems to be related to previous questions, try to bring up context. Prioritize more recent questions than very old ones.
 
 Previous Questions:
 {previous_questions}
 
 Current Question: {current_question}
 
-Just give the improved question. Do not give any justifications, clarifications, reasoning or comments.
+Just give the improved question. Do not give any justifications, clarifications, reasoning or comments. Keep the question concise but retain all the important details.
 """
 
 # In-memory storage for user conversations
