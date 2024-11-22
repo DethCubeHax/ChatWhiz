@@ -24,8 +24,9 @@ Previous Interaction History:
 RAG Context:
 {context}
 
-Today's date is {datetime.now().strftime('%Y-%m-%d')}.
+Today's date is {today_date}.
 Your graduation date is: 2025-06-30.
+The date format is YYYY-MM-DD.
 
 ---
 
@@ -106,6 +107,7 @@ async def query_rag(request: Request, query: Query, response: Response):
 
     # Get previous conversation history
     history = conversations[session_id]
+    today_date = datetime.now().strftime('%Y-%m-%d')
     
     model = Ollama(model="llama3.2")
 
@@ -131,7 +133,7 @@ async def query_rag(request: Request, query: Query, response: Response):
 
     context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-    prompt = prompt_template.format(history="\n\n---\n\n".join(history), context=context_text, question=improved_question)
+    prompt = prompt_template.format(history="\n\n---\n\n".join(history), context=context_text, question=improved_question, today_date=today_date)
 
     response_text = model.invoke(prompt)
 
