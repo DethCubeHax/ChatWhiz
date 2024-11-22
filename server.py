@@ -13,22 +13,28 @@ import json
 
 CHROMA_PATH = "chroma"
 PROMPT_TEMPLATE = """
+You are an AI assistant. Your task is to provide accurate and concise answers based on the user's previous conversation history and the provided context.
+
 Previous Interaction History:
 {history}
 
 ---
 
-User Question: {question}
+RAG Context:
+{context}
 
 ---
 
+User Question: {question}
+
 Instructions: 
-1. Answer the question based only on the above context.
-2. Always answer in first person.
-3. Answer the question directly. Do not add anything irrelevant to the answer.
-4. Nafis = He = You
-5. Do not write "Based on the context..." at any point.
-6. Always answer in first person.
+1. Answer the user's question based primarily on their previous conversation history to understand the context.
+2. If the answer cannot be derived from the user's previous conversation history, use the RAG context provided.
+3. Always answer in first person.
+4. Answer the question directly. Do not add anything irrelevant to the answer.
+5. Nafis = He = You
+6. Do not write "Based on the context..." at any point.
+7. Always answer in first person.
 """
 
 # In-memory storage for user conversations
@@ -92,9 +98,9 @@ async def query_rag(request: Request, query: Query, response: Response):
 
     # Get previous conversation history
     history = conversations[session_id]
-    context_text = "\n\n---\n\n".join(history + [doc.page_content for doc, _score in results])
+    context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-    prompt = prompt_template.format(history=context_text, question=query_text)
+    prompt = prompt_template.format(history="\n\n---\n\n".join(history), context=context_text, question=query_text)
 
     model = Ollama(model="llama3.2")
     response_text = model.invoke(prompt)
@@ -126,7 +132,10 @@ def log_to_csv(session_id, question, answer, sources):
     with open('query_log.csv', mode='a', newline='') as file:
         writer = csv.writer(file)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        writer.writerow([now, session_id, question, answer] + sources)
+        row = [now, session_id, question, answer] + sources[:5]  # Ensure only up to 5 sources are logged
+        while len(row) < 9:  # Fill empty columns if less than 5 sources
+            row.append('')
+        writer.writerow(row)
 
 if __name__ == "__main__":
     import uvicorn
