@@ -47,6 +47,7 @@ Given the following previous questions, improve the current question to make it 
 If the current question seems new and doesn't seem to continue from any previous context, just improve the sentence overall.
 If the current question seems to be related to previous questions, try to bring up context.
 DO NOT DEVIATE TOO MUCH FROM THE ORIGINAL QUESTION. Just add minor additions to the context that might help.
+Do not change pronouns such and person indicators such as My, your, he, she, they, etc.
 
 Previous Questions:
 {previous_questions}
