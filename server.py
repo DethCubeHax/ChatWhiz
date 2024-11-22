@@ -1,32 +1,38 @@
 import csv
 import argparse
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain.vectorstores.chroma import Chroma
 from langchain.prompts import ChatPromptTemplate
 from langchain_community.llms.ollama import Ollama
 from get_embedding_function import get_embedding_function
-from starlette.middleware.sessions import SessionMiddleware
-from uuid import uuid4
+import random
+import string
 
 CHROMA_PATH = "chroma"
-
 PROMPT_TEMPLATE = """
-Answer the question based only on the following context:
-
-{context}
+Previous Interaction History:
+{history}
 
 ---
 
-Answer the question based on the above context: {question}
-Always answer in first person.
-Answer the question directly. Do not add anything irrelevant to the answer.
-Nafis = He = You
-Do not write "Based on the context..." at any point.
-Always answer in first person.
+User Question: {question}
+
+---
+
+Instructions: 
+1. Answer the question based only on the above context.
+2. Always answer in first person.
+3. Answer the question directly. Do not add anything irrelevant to the answer.
+4. Nafis = He = You
+5. Do not write "Based on the context..." at any point.
+6. Always answer in first person.
 """
+
+# In-memory storage for user conversations
+conversations = {}
 
 app = FastAPI()
 
@@ -39,19 +45,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Add session middleware for session-based storage
-app.add_middleware(SessionMiddleware, secret_key=str(uuid4()))
-
 class Query(BaseModel):
     query_text: str
 
+def generate_random_string(length=12):
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+
 @app.post("/query")
-async def query_rag(request: Request, query: Query):
+async def query_rag(request: Request, query: Query, response: Response):
     query_text = query.query_text
-    
-    # Initialize session history if it doesn't exist
-    if 'history' not in request.session:
-        request.session['history'] = []
+    message_id = request.cookies.get('message_id')
+
+    if not message_id:
+        message_id = generate_random_string()
+        response.set_cookie(key='message_id', value=message_id)
+
+    # Initialize conversation history if it doesn't exist
+    if message_id not in conversations:
+        conversations[message_id] = []
 
     # Prepare the DB.
     embedding_function = get_embedding_function()
@@ -64,10 +75,10 @@ async def query_rag(request: Request, query: Query):
         raise HTTPException(status_code=404, detail="No relevant documents found")
 
     # Get previous conversation history
-    history = request.session['history']
+    history = conversations[message_id]
     context_text = "\n\n---\n\n".join(history + [doc.page_content for doc, _score in results])
     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-    prompt = prompt_template.format(context=context_text, question=query_text)
+    prompt = prompt_template.format(history=context_text, question=query_text)
 
     model = Ollama(model="llama3.2")
     response_text = model.invoke(prompt)
@@ -78,19 +89,14 @@ async def query_rag(request: Request, query: Query):
         "sources": sources
     }
 
-    # Print the questions this particular user has asked before
-    previous_questions = [entry.split('\n')[0] for entry in history if entry.startswith("Question:")]
-    print("Previous Questions:")
-    for question in previous_questions:
-        print(question)
-
-    # Log the question and answer to the session history
-    request.session['history'].append(f"Question: {query_text}\nAnswer: {response_text}")
+    # Log the question and answer to the conversation history
+    conversations[message_id].append(f"Question: {query_text}\nAnswer: {response_text}")
 
     # Log the question, answer, and sources to a CSV file
     log_to_csv(query_text, response_text, sources)
 
     # Print the question and response to the terminal
+    print(f"Message ID: {message_id}")
     print(f"Question: {query_text}")
     print(f"Response: {response_text}")
 
