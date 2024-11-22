@@ -125,7 +125,7 @@ async def query_rag(request: Request, query: Query, response: Response):
 
     # Print the question and response to the terminal
     print(f"Session ID: {session_id}")
-    print(f"Previous Statements: {history}")
+    print(f"Previous Statements: {history[:-2]}")
     print(f"Prompt: {prompt}")
     print(f"Response: {response_text}")
 
