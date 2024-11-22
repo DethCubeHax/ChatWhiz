@@ -52,6 +52,22 @@ class Query(BaseModel):
 def generate_random_string(length=12):
     return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
+def load_conversations():
+    try:
+        with open('conversations.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def save_conversations():
+    with open('conversations.json', 'w') as f:
+        json.dump(conversations, f)
+
+@app.on_event("startup")
+async def startup_event():
+    global conversations
+    conversations = load_conversations()
+
 @app.post("/query")
 async def query_rag(request: Request, query: Query, response: Response):
     query_text = query.query_text
@@ -63,13 +79,6 @@ async def query_rag(request: Request, query: Query, response: Response):
 
     # Initialize conversation history if it doesn't exist
     if message_id not in conversations:
-        conversations[message_id] = []
-
-    # Load conversation history from local storage
-    try:
-        with open(f'{message_id}_history.json', 'r') as f:
-            conversations[message_id] = json.load(f)
-    except FileNotFoundError:
         conversations[message_id] = []
 
     # Prepare the DB.
@@ -100,9 +109,8 @@ async def query_rag(request: Request, query: Query, response: Response):
     # Log the question and answer to the conversation history
     conversations[message_id].append(f"Question: {query_text}\nAnswer: {response_text}")
 
-    # Save conversation history to local storage
-    with open(f'{message_id}_history.json', 'w') as f:
-        json.dump(conversations[message_id], f)
+    # Save conversation history to a single JSON file
+    save_conversations()
 
     # Log the question, answer, and sources to a CSV file
     log_to_csv(query_text, response_text, sources)
