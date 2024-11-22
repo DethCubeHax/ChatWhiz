@@ -23,7 +23,9 @@ Previous Interaction History:
 
 RAG Context:
 {context}
+
 Today's date is {datetime.now().strftime('%Y-%m-%d')}.
+Your graduation date is: 2025-06-30.
 
 ---
 
