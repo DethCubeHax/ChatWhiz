@@ -45,7 +45,7 @@ Previous Questions:
 
 Current Question: {current_question}
 
-Improved Question:
+Just give the improved question. Do not give any justifications, clarifications, reasoning or comments.
 """
 
 # In-memory storage for user conversations
