@@ -103,9 +103,16 @@ async def query_rag(request: Request, query: Query, response: Response):
     if not results:
         raise HTTPException(status_code=404, detail="No relevant documents found")
 
+    # Construct the history with the most recent two question-answer pairs
+    recent_history = history[-4:]
+    formatted_history = "\n".join([
+        f"Question {i//2 + 1}: {recent_history[i]}\nAnswer {i//2 + 1}: {recent_history[i+1]}" 
+        for i in range(0, len(recent_history), 2)
+    ])
+    
     context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-    prompt = prompt_template.format(history="\n\n---\n\n".join(history), context=context_text, question=query_text, today_date=today_date)
+    prompt = prompt_template.format(history=formatted_history, context=context_text, question=query_text, today_date=today_date)
 
     model = Ollama(model="llama3.2")
     response_text = model.invoke(prompt)
@@ -127,7 +134,7 @@ async def query_rag(request: Request, query: Query, response: Response):
 
     # Print the question and response to the terminal
     print(f"Session ID: {session_id}")
-    print(f"Previous Statements: {history[:-2]}")
+    print(f"Previous Statements: {history[:-4]}")
     print(f"Prompt: {prompt}")
     print(f"Response: {response_text}")
 
