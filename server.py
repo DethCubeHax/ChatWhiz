@@ -99,14 +99,17 @@ async def query_rag(request: Request, query: Query, response: Response):
 
     # Get previous conversation history
     history = conversations[session_id]
-    previous_questions = "\n".join([entry for entry in history if entry.startswith("Question:")])
+    
+    if history:
+        # Generate improved question
+        previous_questions = "\n".join([entry for entry in history if entry.startswith("Question:")])
+        improve_prompt_template = ChatPromptTemplate.from_template(IMPROVE_QUESTION_TEMPLATE)
+        improve_prompt = improve_prompt_template.format(previous_questions=previous_questions, current_question=query_text)
 
-    # Generate improved question
-    improve_prompt_template = ChatPromptTemplate.from_template(IMPROVE_QUESTION_TEMPLATE)
-    improve_prompt = improve_prompt_template.format(previous_questions=previous_questions, current_question=query_text)
-
-    model = Ollama(model="llama3.2")
-    improved_question = model.invoke(improve_prompt).strip()
+        model = Ollama(model="llama3.2")
+        improved_question = model.invoke(improve_prompt).strip()
+    else:
+        improved_question = query_text
 
     # Prepare the DB.
     embedding_function = get_embedding_function()
