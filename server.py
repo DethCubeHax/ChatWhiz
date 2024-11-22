@@ -7,6 +7,7 @@ from langchain.vectorstores.chroma import Chroma
 from langchain.prompts import ChatPromptTemplate
 from langchain_community.llms.ollama import Ollama
 from get_embedding_function import get_embedding_function
+from datetime import datetime
 import random
 import string
 import json
@@ -22,6 +23,7 @@ Previous Interaction History:
 
 RAG Context:
 {context}
+Today's date is {datetime.now().strftime('%Y-%m-%d')}.
 
 ---
 
@@ -40,7 +42,8 @@ Instructions:
 IMPROVE_QUESTION_TEMPLATE = """
 Given the following previous questions, improve the current question to make it more specific and contextual. 
 If the current question seems new and doesn't seem to continue from any previous context, just improve the sentence overall.
-If the current question seems to be related to previous questions, try to bring up context. Prioritize more recent questions than very old ones.
+If the current question seems to be related to previous questions, try to bring up context.
+DO NOT DEVIATE TOO MUCH FROM THE ORIGINAL QUESTION. Just add minor additions to the context that might help.
 
 Previous Questions:
 {previous_questions}
