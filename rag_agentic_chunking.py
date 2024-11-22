@@ -5,17 +5,21 @@ from langchain.document_loaders.pdf import PyPDFDirectoryLoader
 from langchain.schema.document import Document
 from langchain_community.embeddings.ollama import OllamaEmbeddings
 from langchain.vectorstores.chroma import Chroma
-from transformers import AutoTokenizer, LlamaTokenizer, LlamaForCausalLM
+from transformers import AutoTokenizer
 from langchain_community.llms.ollama import Ollama  # Ensure you have the correct library installed
 from tqdm import tqdm  # Import tqdm for the progress bar
+import torch
+import numpy as np
 
 CHROMA_PATH = "chroma"
 DATA_PATH = "data"
 LLAMA_TOKENIZER_PATH = "/Users/nafis/.llama/checkpoints/Llama3.2-3B"  # Path to your tokenizer
 
-def main():
+MAX_SECTION_LENGTH = 500
+SENTENCE_SEARCH_LIMIT = 100
+SECTION_OVERLAP = 100
 
-    # Check if the database should be cleared (using the --clear flag).
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--reset", action="store_true", help="Reset the database.")
     args = parser.parse_args()
@@ -27,6 +31,7 @@ def main():
     documents = load_documents()
     mini_chunks = create_mini_chunks(documents)
     chunks = agentic_chunking(mini_chunks)
+    save_chunks_to_file(chunks, "chunks.txt")
     add_to_chroma(chunks)
 
 
@@ -37,12 +42,59 @@ def load_documents():
 
 def create_mini_chunks(documents: list[Document]):
     mini_chunks = []
-    for doc in documents:
+    for doc in tqdm(documents, desc="Loading documents"):
         text = doc.page_content
-        for i in range(0, len(text), 300):
-            mini_chunk = text[i:i+300]
-            mini_chunks.append(Document(page_content=mini_chunk, metadata=doc.metadata))
+        mini_chunks.extend(split_text(text, doc.metadata))
     return mini_chunks
+
+
+def split_text(text, metadata):
+    SENTENCE_ENDINGS = [".", "!", "?"]
+    WORD_BREAKS = [",", ";", ":", " ", "(", ")", "[", "]", "{", "}", "\t", " "]
+    length = len(text)
+    start = 0
+    end = length
+    chunks = []
+
+    while start + SECTION_OVERLAP < length:
+        last_word = -1
+        end = start + MAX_SECTION_LENGTH
+
+        if end > length:
+            end = length
+        else:
+            while end < length and (end - start - MAX_SECTION_LENGTH) < SENTENCE_SEARCH_LIMIT and text[end] not in SENTENCE_ENDINGS:
+                if text[end] in WORD_BREAKS:
+                    last_word = end
+                end += 1
+            if end < length and text[end] not in SENTENCE_ENDINGS and last_word > 0:
+                end = last_word
+
+        if end < length:
+            end += 1
+
+        last_word = -1
+        while start > 0 and start > end - MAX_SECTION_LENGTH - 2 * SENTENCE_SEARCH_LIMIT and text[start] not in SENTENCE_ENDINGS:
+            if text[start] in WORD_BREAKS:
+                last_word = start
+            start -= 1
+        if text[start] not in SENTENCE_ENDINGS and last_word > 0:
+            start = last_word
+        if start > 0:
+            start += 1
+
+        section_text = text[start:end]
+        chunk = Document(page_content=section_text, metadata=metadata)
+        chunks.append(chunk)
+
+        start = end - SECTION_OVERLAP
+
+    if start + SECTION_OVERLAP < end:
+        section_text = text[start:end]
+        chunk = Document(page_content=section_text, metadata=metadata)
+        chunks.append(chunk)
+
+    return chunks
 
 
 def agentic_chunking(mini_chunks: list[Document]):
@@ -64,12 +116,18 @@ def agentic_chunking(mini_chunks: list[Document]):
         current_group.append(chunk)
 
         if current_length >= 800:  # Define your chunk size
-            grouped_chunks.append(combine_chunks(current_group))
+            combined_chunk = combine_chunks(current_group)
+            grouped_chunks.append(combined_chunk)
             current_group = []
             current_length = 0
+            print(f"Chunk created: {combined_chunk.page_content}")
+            print("="*50)
 
     if current_group:
-        grouped_chunks.append(combine_chunks(current_group))
+        combined_chunk = combine_chunks(current_group)
+        grouped_chunks.append(combined_chunk)
+        print(f"Chunk created: {combined_chunk.page_content}")
+        print("="*50)
 
     return grouped_chunks
 
@@ -80,24 +138,25 @@ def combine_chunks(chunks: list[Document]):
     return Document(page_content=combined_text, metadata=combined_metadata)
 
 
+def save_chunks_to_file(chunks, filename):
+    with open(filename, 'w') as f:
+        for chunk in chunks:
+            f.write(f"{chunk.page_content}\n\n")
+
+
 def add_to_chroma(chunks: list[Document]):
-    # Load the existing database.
     embedding_function = OllamaEmbeddings(model="nomic-embed-text")
     db = Chroma(
         persist_directory=CHROMA_PATH, embedding_function=embedding_function
     )
 
-    # Calculate Page IDs.
     chunks_with_ids = calculate_chunk_ids(chunks)
-
-    # Add or Update the documents.
-    existing_items = db.get(include=[])  # IDs are always included by default
+    existing_items = db.get(include=[])
     existing_ids = set(existing_items["ids"])
     print(f"Number of existing documents in DB: {len(existing_ids)}")
 
-    # Only add documents that don't exist in the DB.
     new_chunks = []
-    for chunk in chunks_with_ids:
+    for chunk in tqdm(chunks_with_ids, desc="Adding to Chroma"):
         if chunk.metadata["id"] not in existing_ids:
             new_chunks.append(chunk)
 
@@ -112,9 +171,6 @@ def add_to_chroma(chunks: list[Document]):
 
 def calculate_chunk_ids(chunks):
 
-    # This will create IDs like "data/monopoly.pdf:6:2"
-    # Page Source : Page Number : Chunk Index
-
     last_page_id = None
     current_chunk_index = 0
 
@@ -123,17 +179,14 @@ def calculate_chunk_ids(chunks):
         page = chunk.metadata.get("page")
         current_page_id = f"{source}:{page}"
 
-        # If the page ID is the same as the last one, increment the index.
         if current_page_id == last_page_id:
             current_chunk_index += 1
         else:
             current_chunk_index = 0
 
-        # Calculate the chunk ID.
         chunk_id = f"{current_page_id}:{current_chunk_index}"
         last_page_id = current_page_id
 
-        # Add it to the page meta-data.
         chunk.metadata["id"] = chunk_id
 
     return chunks
@@ -142,7 +195,6 @@ def calculate_chunk_ids(chunks):
 def clear_database():
     if os.path.exists(CHROMA_PATH):
         shutil.rmtree(CHROMA_PATH)
-
 
 if __name__ == "__main__":
     main()

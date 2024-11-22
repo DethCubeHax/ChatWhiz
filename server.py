@@ -37,6 +37,17 @@ Instructions:
 7. Always answer in first person.
 """
 
+IMPROVE_QUESTION_TEMPLATE = """
+Given the following previous questions, improve the current question to make it more specific and contextual.
+
+Previous Questions:
+{previous_questions}
+
+Current Question: {current_question}
+
+Improved Question:
+"""
+
 # In-memory storage for user conversations
 conversations = {}
 
@@ -86,23 +97,31 @@ async def query_rag(request: Request, query: Query, response: Response):
     if session_id not in conversations:
         conversations[session_id] = []
 
+    # Get previous conversation history
+    history = conversations[session_id]
+    previous_questions = "\n".join([entry for entry in history if entry.startswith("Question:")])
+
+    # Generate improved question
+    improve_prompt_template = ChatPromptTemplate.from_template(IMPROVE_QUESTION_TEMPLATE)
+    improve_prompt = improve_prompt_template.format(previous_questions=previous_questions, current_question=query_text)
+
+    model = Ollama(model="llama3.2")
+    improved_question = model.invoke(improve_prompt).strip()
+
     # Prepare the DB.
     embedding_function = get_embedding_function()
     db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
 
     # Search the DB.
-    results = db.similarity_search_with_score(query_text, k=5)
+    results = db.similarity_search_with_score(improved_question, k=5)
 
     if not results:
         raise HTTPException(status_code=404, detail="No relevant documents found")
 
-    # Get previous conversation history
-    history = conversations[session_id]
     context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-    prompt = prompt_template.format(history="\n\n---\n\n".join(history), context=context_text, question=query_text)
+    prompt = prompt_template.format(history="\n\n---\n\n".join(history), context=context_text, question=improved_question)
 
-    model = Ollama(model="llama3.2")
     response_text = model.invoke(prompt)
 
     sources = [doc.page_content for doc, _score in results]
@@ -112,28 +131,29 @@ async def query_rag(request: Request, query: Query, response: Response):
     }
 
     # Log the question and answer to the conversation history
-    conversations[session_id].append(f"Question: {query_text}\nAnswer: {response_text}")
+    conversations[session_id].append(f"Question: {query_text}\nImproved Question: {improved_question}\nAnswer: {response_text}")
 
     # Save conversation history to a single JSON file
     save_conversations()
 
     # Log the question, answer, and sources to a CSV file
-    log_to_csv(session_id, query_text, response_text, sources)
+    log_to_csv(session_id, query_text, improved_question, response_text, sources)
 
     # Print the question and response to the terminal
     print(f"Session ID: {session_id}")
     print(f"Previous Statements: {history}")
+    print(f"Improved Question: {improved_question}")
     print(f"Prompt: {prompt}")
     print(f"Response: {response_text}")
 
     return formatted_response
 
-def log_to_csv(session_id, question, answer, sources):
+def log_to_csv(session_id, question, improved_question, answer, sources):
     with open('query_log.csv', mode='a', newline='') as file:
         writer = csv.writer(file)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        row = [now, session_id, question, answer] + sources[:5]  # Ensure only up to 5 sources are logged
-        while len(row) < 9:  # Fill empty columns if less than 5 sources
+        row = [now, session_id, question, improved_question, answer] + sources[:5]  # Ensure only up to 5 sources are logged
+        while len(row) < 10:  # Fill empty columns if less than 5 sources
             row.append('')
         writer.writerow(row)
 
