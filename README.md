@@ -1,157 +1,187 @@
 # ChatWhiz
 
-This project implements scripts for Retrieval-Augmented Generation (RAG) using the LLaMa tokenizer and the Ollama model for chunking PDF documents, adding them to a Chroma database, and querying that database using FastAPI. I will update it as I learn more about RAG and LLM's
+ChatWhiz is an AI assistant implementation that provides personalized responses about my professional experience and projects using Google's Gemini AI model. Built with FastAPI and Python, it features real-time data synchronization, conversation persistence, and robust user session management.
+
+## Features
+
+### Core Functionality
+- AI-powered conversational interface using Google Gemini-2.0-flash model
+- Dynamic data synchronization from portfolio JSON sources
+- Persistent conversation storage using Supabase
+- User session management with UUID-based tracking
+- Rate limiting system (50 requests/24 hours per user)
+
+### Technical Features
+- Real-time data updates every 2 hours
+- 5-message conversation context window
+- CORS middleware for secure cross-origin requests
+- Comprehensive error handling and logging
+- Health monitoring endpoints
+
+## API Endpoints
+
+### Primary Endpoints
+```
+POST /query
+- Process user queries and generate AI responses
+- Request body: { "query_text": "string" }
+- Response: { "response": "string" }
+
+GET /history
+- Retrieve conversation history for current user
+- Response: { "history": [...] }
+
+GET /all-history
+- Retrieve all conversations (admin access)
+- Response: { "history": [...] }
+
+DELETE /history
+- Clear conversation history for current user
+- Response: { "message": "string" }
+```
+
+### Monitoring Endpoints
+```
+GET /health
+- Check system health and data update status
+- Response: {
+    "status": "healthy",
+    "timestamp": "ISO timestamp",
+    "last_data_update": "ISO timestamp",
+    "data_available": boolean
+}
+
+GET /api/remaining-requests
+- Check remaining API requests for current user
+- Response: {
+    "remaining_requests": int,
+    "rate_limit": int,
+    "window_hours": float
+}
+```
+
+## Installation
+
+1. Clone the repository
+```bash
+git clone https://github.com/YourUsername/ChatWhiz.git
+cd ChatWhiz
+```
+
+2. Install dependencies
+```bash
+pip install -r requirements.txt
+```
+
+3. Set up environment variables
+```bash
+# Create .env file with the following variables
+GEMINI_API_KEY=your_gemini_api_key
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_key
+```
 
 ## Requirements
-
-- Python 3.7+
-- Install required packages using:
-  ```bash
-  pip install -r requirements.txt
-  ```
-
-## Setup
-
-1. **Install Dependencies**: Install the necessary libraries by running:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Model Files**: Ensure you have the following files in `/path/to/llama/folder/root` (you can change the path from the one given):
-   - `checklist.chk`
-   - `consolidated.00.pth`
-   - `params.json`
-   - `tokenizer.model`
-
-3. **Data Directory**: Place your PDF files in the `data/` directory.
-
-4. **Chroma Path**: Ensure the `chroma/` directory exists or update `CHROMA_PATH` in the scripts to your desired path.
-
-## Running the Scripts
-
-### Chunking and Adding to Chroma Database
-
-To run the script for chunking PDF documents and adding them to the Chroma database, use:
-
-```bash
-python rag_agentic_chunking.py --reset
+```
+fastapi
+uvicorn
+python-dotenv
+google-generativeai
+requests
+supabase
+pydantic
+python-multipart
 ```
 
-The `--reset` flag clears the existing database before processing the documents. If you want to update the database without clearing it, run the script without the `--reset` flag:
+## Usage
 
-```bash
-python rag_agentic_chunking.py
-```
-
-### Running the FastAPI Server
-
-To run the FastAPI server, use:
-
+1. Start the server
 ```bash
 uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 
-The server will be available at `http://0.0.0.0:8000`.
+2. The API will be available at `http://localhost:8000`
 
-### Querying with Test Script
+## Data Management
 
-To test querying the Chroma database with a standalone script, use:
+### Data Sources
+The system synchronizes data from three main JSON sources:
+- Projects: `/projects.json`
+- Work Experience: `/work.json`
+- Research: `/research.json`
 
+### Data Update Mechanism
+- Automatic updates every 2 hours
+- Updates only occur if data has changed
+- Failed updates retry on next cycle
+
+## Conversation Management
+
+### Storage
+- Conversations are stored in Supabase
+- Each conversation includes:
+  - Timestamp
+  - User ID
+  - Query
+  - Response
+
+### Context Window
+- Maintains last 5 conversations per user
+- Used for context-aware responses
+- Automatically cleared after session ends
+
+## Rate Limiting
+
+### Limits
+- 50 requests per user per 24 hours
+- Based on IP address with UUID mapping
+- Automatic cleanup of expired request counts
+
+### Monitoring
+- Real-time request counting
+- Remaining request checking endpoint
+- Automatic rate limit enforcement
+
+## Security
+
+### CORS Configuration
+- Restricted to specified domains
+- Secure credential handling
+- Protected endpoints
+
+### Error Handling
+- Comprehensive error catching
+- Detailed error responses
+- Failed request logging
+
+## Development
+
+### Running Tests
 ```bash
-python test_rag.py
+# Run tests
+python -m pytest
+
+# Run with coverage
+python -m pytest --cov=.
 ```
 
-Follow the on-screen prompt to input your query.
+### Contributing
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
-## API Endpoints
+## License
 
-### POST /query
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-Query the Chroma database using RAG.
+## Contact
 
-**Request Body**:
-```json
-{
-  "query_text": "Your question here"
-}
-```
+For questions or support, please contact me at wasiflh@connect.hku.hk
 
-**Response**:
-```json
-{
-  "response": "Generated response based on the context",
-  "sources": [
-    "source1",
-    "source2",
-    "..."
-  ]
-}
-```
+## Acknowledgments
 
-## Script Explanation
-
-### rag_agentic_chunking.py
-
-- **load_documents**: Loads all PDF documents from the `data/` directory.
-- **create_mini_chunks**: Splits documents into mini chunks of 300 characters.
-- **agentic_chunking**: Uses the LLaMa tokenizer and the Ollama model to process the mini chunks and group them into larger chunks.
-- **add_to_chroma**: Adds or updates the chunks in the Chroma database.
-- **calculate_chunk_ids**: Assigns unique IDs to each chunk based on its source and position.
-- **clear_database**: Clears the Chroma database.
-
-### server.py
-
-- **query_rag**: The main endpoint that handles the RAG query process.
-  - **Embedding Function**: Prepares the Chroma database using the embedding function.
-  - **Similarity Search**: Searches the Chroma database for relevant documents.
-  - **History Management**: Maintains session history and uses it to build context.
-  - **Prompt Generation**: Creates a prompt for the Ollama model using the context.
-  - **Model Invocation**: Gets the response from the Ollama model.
-  - **Response Formatting**: Formats the response and logs it to a CSV file.
-
-### test_rag.py
-
-- **query_rag**: Queries the Chroma database and returns the response along with the sources.
-- **log_to_csv**: Logs the question, answer, and sources to a CSV file.
-
-
-## LICENSE
-
-MIT License
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-## Directory Structure
-
-Here is the recommended structure for your project:
-
-```plaintext
-project/
-│
-├── data/
-│   └── your_pdf_files.pdf
-├── chroma/
-│
-├── rag_agentic_chunking.py
-├── server.py
-├── test_rag.py
-├── requirements.txt
-├── LICENSE
-└── README.md
-```
+- Google Generative AI team for the Gemini model
+- Supabase team for the backend infrastructure
+- FastAPI team for the excellent framework
