@@ -1,13 +1,14 @@
 import json
 import re
-from typing import Iterator, List
+from typing import Dict, Iterator, List, Optional
 
-from .config import SOURCE_CATALOG, SOURCE_KEYS, SOURCE_STATUS_LABELS
+from .config import SOURCE_CATALOG, SOURCE_KEYS, SOURCE_STATUS_LABELS, WEB_SEARCH_STATUS
 from .data_manager import data_manager
 from .gemini_client import gemini_client
 from .prompts import build_answer_prompt, build_router_prompt, format_conversation_history
 from .session import save_exchange
 from .stream_events import emit_done, emit_status, emit_token
+from .web_search import search_web
 
 
 def fallback_sources(query_text: str) -> List[str]:
@@ -34,6 +35,15 @@ def fallback_sources(query_text: str) -> List[str]:
     return [key for key in SOURCE_KEYS if key in selected]
 
 
+def normalize_web_search(value) -> Optional[str]:
+    if not value:
+        return None
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
 def parse_router_response(raw_text: str) -> dict:
     cleaned = raw_text.strip()
     if cleaned.startswith("```"):
@@ -48,6 +58,7 @@ def parse_router_response(raw_text: str) -> dict:
     return {
         "sources": valid_sources,
         "reasoning": parsed.get("reasoning", ""),
+        "web_search": normalize_web_search(parsed.get("web_search")),
     }
 
 
@@ -68,12 +79,30 @@ def select_sources(query_text: str, history) -> dict:
         return {
             "sources": fallback_sources(query_text),
             "reasoning": "Using keyword routing fallback.",
+            "web_search": None,
         }
 
 
-def gather_context(selected_sources: List[str]) -> dict:
+def gather_context(plan: dict) -> tuple[Dict, List[str]]:
     data_manager.ensure_loaded()
-    return data_manager.get_sources(selected_sources)
+    context: Dict = {}
+    statuses: List[str] = []
+
+    for source in plan["sources"]:
+        statuses.append(SOURCE_STATUS_LABELS[source])
+        context[source] = data_manager.get_source(source)
+
+    web_query = plan.get("web_search")
+    if web_query:
+        statuses.append(WEB_SEARCH_STATUS)
+        results = search_web(web_query)
+        context["web_search"] = {
+            "query": web_query,
+            "results": results,
+            "result_count": len(results),
+        }
+
+    return context, statuses
 
 
 def answer_query(user_id: str, query_text: str) -> str:
@@ -81,7 +110,7 @@ def answer_query(user_id: str, query_text: str) -> str:
 
     history = get_history(user_id)
     plan = select_sources(query_text, history)
-    context = gather_context(plan["sources"])
+    context, _ = gather_context(plan)
     prompt = build_answer_prompt(query_text, context, history)
     response_text = gemini_client.generate_text(prompt)
     save_exchange(user_id, query_text, response_text)
@@ -99,15 +128,13 @@ def stream_answer(user_id: str, query_text: str) -> Iterator[str]:
         yield emit_status("Deciding which sources to check...")
 
         plan = select_sources(query_text, history)
-        selected_sources = plan["sources"]
 
         if plan.get("reasoning"):
             yield emit_status(plan["reasoning"])
 
-        context = {}
-        for source in selected_sources:
-            yield emit_status(SOURCE_STATUS_LABELS[source])
-            context[source] = data_manager.get_source(source)
+        context, statuses = gather_context(plan)
+        for status in statuses:
+            yield emit_status(status)
 
         yield emit_status("Drafting response...")
 

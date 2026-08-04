@@ -34,3 +34,6 @@ SOURCE_STATUS_LABELS = {
     "research": "Analysing research...",
     "resume": "Analysing resume...",
 }
+
+WEB_SEARCH_STATUS = "Searching online..."
+WEB_SEARCH_MAX_RESULTS = 5

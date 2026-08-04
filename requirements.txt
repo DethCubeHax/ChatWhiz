@@ -6,3 +6,4 @@ requests
 pypdf
 pydantic
 python-multipart
+duckduckgo-search
