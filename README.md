@@ -5,9 +5,9 @@ ChatWhiz is an AI assistant implementation that provides personalized responses 
 ## Features
 
 ### Core Functionality
-- AI-powered conversational interface using Google Gemini-2.0-flash model
+- AI-powered conversational interface using Google Gemini-3.5-flash model
 - Dynamic data synchronization from portfolio JSON sources
-- Persistent conversation storage using Supabase
+- In-session conversation history per user
 - User session management with UUID-based tracking
 - Rate limiting system (50 requests/24 hours per user)
 
@@ -29,10 +29,6 @@ POST /query
 
 GET /history
 - Retrieve conversation history for current user
-- Response: { "history": [...] }
-
-GET /all-history
-- Retrieve all conversations (admin access)
 - Response: { "history": [...] }
 
 DELETE /history
@@ -77,8 +73,6 @@ pip install -r requirements.txt
 ```bash
 # Create .env file with the following variables
 GEMINI_API_KEY=your_gemini_api_key
-SUPABASE_URL=your_supabase_url
-SUPABASE_KEY=your_supabase_key
 ```
 
 ## Requirements
@@ -88,7 +82,6 @@ uvicorn
 python-dotenv
 google-generativeai
 requests
-supabase
 pydantic
 python-multipart
 ```
@@ -118,7 +111,7 @@ The system synchronizes data from three main JSON sources:
 ## Conversation Management
 
 ### Storage
-- Conversations are stored in Supabase
+- Conversations are kept in memory for the current session
 - Each conversation includes:
   - Timestamp
   - User ID
@@ -183,5 +176,4 @@ For questions or support, please contact me at wasiflh@connect.hku.hk
 ## Acknowledgments
 
 - Google Generative AI team for the Gemini model
-- Supabase team for the backend infrastructure
 - FastAPI team for the excellent framework

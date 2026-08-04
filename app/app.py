@@ -12,7 +12,6 @@ import threading
 import time
 import uuid
 from typing import Dict
-from supabase import create_client, Client
 
 load_dotenv()
 
@@ -29,34 +28,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-supabase: Client = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")
-)
-
 ip_to_user_id: Dict[str, str] = {}
 user_request_counts: Dict[str, list] = defaultdict(list)
 last_cleanup = datetime.now()
-
-def save_conversation(timestamp, user_id, query, response):
-    try:
-        data = {
-            "timestamp": timestamp,
-            "user_id": user_id,
-            "query": query,
-            "response": response
-        }
-        supabase.table('conversations').insert(data).execute()
-    except Exception as e:
-        print(f"Error saving conversation: {str(e)}")
-
-def read_conversations():
-    try:
-        response = supabase.table('conversations').select("*").order('timestamp.desc').execute()
-        return response.data
-    except Exception as e:
-        print(f"Error reading conversations: {str(e)}")
-        return []
 
 SYSTEM_PROMPT = """You are Nafis Ul Islam, a computer science student at The University of Hong Kong who will graduate on June 30th, 2025. You were born in August 2002, 22 years old. Respond in first person as yourself.
 
@@ -229,7 +203,6 @@ async def process_query(query: Query, request: Request):
         })
         
         conversation_history[user_id] = history[-MAX_HISTORY:]
-        save_conversation(timestamp, user_id, query.query_text, response_text)
         
         return {"response": response_text}
     
@@ -245,17 +218,6 @@ async def get_conversation_history(request: Request):
     user_id = get_user_id(request)
     history = conversation_history[user_id]
     return {"history": history}
-
-@app.get("/all-history")
-async def get_all_history():
-    try:
-        conversations = read_conversations()
-        return {"history": conversations}
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error reading conversation history: {str(e)}"
-        )
 
 @app.delete("/history")
 async def clear_conversation_history(request: Request):
