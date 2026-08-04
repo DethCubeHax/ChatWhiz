@@ -1,8 +1,7 @@
-import json
 import time
 from datetime import datetime
 from io import BytesIO
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 import requests
 from pypdf import PdfReader
@@ -24,78 +23,102 @@ class DataManager:
             "resume": f"{self.base_url}/Resume.pdf",
         }
         self.cache: Dict[str, Dict[str, Any]] = {}
+        self.last_full_load: Optional[datetime] = None
 
-    def _is_stale(self, key: str) -> bool:
-        entry = self.cache.get(key)
-        if not entry:
+    def _is_stale(self) -> bool:
+        if not self.last_full_load:
             return True
-        fetched_at = entry["fetched_at"]
-        return datetime.now() - fetched_at > DATA_CACHE_TTL
+        return datetime.now() - self.last_full_load > DATA_CACHE_TTL
 
-    def fetch_json(self, url: str):
+    def _fetch_json(self, url: str):
         response = requests.get(url, timeout=30)
         response.raise_for_status()
         return response.json()
 
-    def fetch_resume_text(self) -> str:
+    def _fetch_resume_text(self) -> str:
         response = requests.get(self.sources["resume"], timeout=30)
         response.raise_for_status()
         reader = PdfReader(BytesIO(response.content))
         pages = [page.extract_text() or "" for page in reader.pages]
         return "\n".join(pages).strip()
 
-    def fetch_source(self, key: str):
-        if key not in self.sources:
-            raise ValueError(f"Unknown source: {key}")
-
-        if key in self.cache and not self._is_stale(key):
-            return self.cache[key]["data"]
-
+    def _fetch_from_network(self, key: str):
         if key == "resume":
-            data = self.fetch_resume_text()
-        else:
-            data = self.fetch_json(self.sources[key])
+            return self._fetch_resume_text()
+        return self._fetch_json(self.sources[key])
 
-        self.cache[key] = {"data": data, "fetched_at": datetime.now()}
-        return data
+    def is_fully_loaded(self) -> bool:
+        return all(key in self.cache for key in SOURCE_KEYS) and not self._is_stale()
 
-    def fetch_sources(self, keys: Iterable[str]) -> Dict[str, Any]:
-        context: Dict[str, Any] = {}
-        for key in keys:
-            context[key] = self.fetch_source(key)
-        return context
+    def load_all_sources(self, force: bool = False) -> None:
+        if not force and self.is_fully_loaded():
+            return
 
-    def warm_cache(self) -> None:
+        errors: List[str] = []
+        new_cache: Dict[str, Dict[str, Any]] = dict(self.cache)
+
         for key in SOURCE_KEYS:
             try:
-                self.fetch_source(key)
+                data = self._fetch_from_network(key)
+                new_cache[key] = {"data": data, "fetched_at": datetime.now()}
+                print(f"Loaded source into memory: {key}")
             except Exception as error:
-                print(f"Warm cache failed for {key}: {error}")
+                errors.append(f"{key}: {error}")
+                print(f"Failed loading source {key}: {error}")
+
+        if not all(key in new_cache for key in SOURCE_KEYS):
+            raise RuntimeError(
+                "Unable to load all portfolio sources into memory. "
+                + ("; ".join(errors) if errors else "No sources available.")
+            )
+
+        self.cache = new_cache
+        self.last_full_load = datetime.now()
+        print(f"All portfolio sources loaded into memory at {self.last_full_load.isoformat()}")
+
+    def ensure_loaded(self) -> None:
+        self.load_all_sources(force=self._is_stale())
+
+    def get_source(self, key: str):
+        if key not in SOURCE_KEYS:
+            raise ValueError(f"Unknown source: {key}")
+        if key not in self.cache:
+            raise RuntimeError(f"Source '{key}' is not loaded in memory")
+        return self.cache[key]["data"]
+
+    def get_sources(self, keys: Iterable[str]) -> Dict[str, Any]:
+        self.ensure_loaded()
+        return {key: self.get_source(key) for key in keys}
+
+    def get_all_sources(self) -> Dict[str, Any]:
+        self.ensure_loaded()
+        return {key: self.get_source(key) for key in SOURCE_KEYS}
+
+    def warm_cache(self) -> None:
+        self.load_all_sources(force=True)
 
     def get_summary(self) -> Dict[str, Any]:
-        if not self.cache:
-            return {"loaded": False, "cached_sources": []}
+        if not all(key in self.cache for key in SOURCE_KEYS):
+            return {"loaded": False, "cached_sources": list(self.cache.keys())}
 
         summary = {
             "loaded": True,
             "cached_sources": list(self.cache.keys()),
+            "last_full_load": self.last_full_load.isoformat() if self.last_full_load else None,
             "sources": self.sources,
             "counts": {},
         }
 
-        if "projects" in self.cache:
-            projects = self.cache["projects"]["data"]
-            summary["counts"]["projects"] = len(projects) if isinstance(projects, list) else 0
-        if "work" in self.cache:
-            work = self.cache["work"]["data"]
-            summary["counts"]["work"] = len(work) if isinstance(work, list) else 0
-        if "research" in self.cache:
-            research = self.cache["research"]["data"]
-            research_items = research.get("projects", []) if isinstance(research, dict) else research
-            summary["counts"]["research"] = len(research_items) if isinstance(research_items, list) else 0
-        if "resume" in self.cache:
-            resume = self.cache["resume"]["data"]
-            summary["resume_chars"] = len(resume) if isinstance(resume, str) else 0
+        projects = self.cache["projects"]["data"]
+        work = self.cache["work"]["data"]
+        research = self.cache["research"]["data"]
+        resume = self.cache["resume"]["data"]
+
+        summary["counts"]["projects"] = len(projects) if isinstance(projects, list) else 0
+        summary["counts"]["work"] = len(work) if isinstance(work, list) else 0
+        research_items = research.get("projects", []) if isinstance(research, dict) else research
+        summary["counts"]["research"] = len(research_items) if isinstance(research_items, list) else 0
+        summary["resume_chars"] = len(resume) if isinstance(resume, str) else 0
 
         return summary
 
@@ -106,7 +129,7 @@ class DataManager:
             started = time.perf_counter()
             try:
                 if key == "resume":
-                    text = self.fetch_resume_text()
+                    text = self._fetch_resume_text()
                     results[key] = {
                         "ok": True,
                         "url": url,
@@ -114,7 +137,7 @@ class DataManager:
                         "resume_chars": len(text),
                     }
                 else:
-                    data = self.fetch_json(url)
+                    data = self._fetch_json(url)
                     item_count = len(data) if isinstance(data, list) else None
                     if isinstance(data, dict) and isinstance(data.get("projects"), list):
                         item_count = len(data["projects"])

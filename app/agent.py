@@ -71,15 +71,9 @@ def select_sources(query_text: str, history) -> dict:
         }
 
 
-def gather_context(selected_sources: List[str], on_status=None) -> dict:
-    context = {}
-
-    for source in selected_sources:
-        if on_status:
-            on_status(SOURCE_STATUS_LABELS[source])
-        context[source] = data_manager.fetch_source(source)
-
-    return context
+def gather_context(selected_sources: List[str]) -> dict:
+    data_manager.ensure_loaded()
+    return data_manager.get_sources(selected_sources)
 
 
 def answer_query(user_id: str, query_text: str) -> str:
@@ -101,6 +95,7 @@ def stream_answer(user_id: str, query_text: str) -> Iterator[str]:
     chunks: List[str] = []
 
     try:
+        data_manager.ensure_loaded()
         yield emit_status("Deciding which sources to check...")
 
         plan = select_sources(query_text, history)
@@ -112,7 +107,7 @@ def stream_answer(user_id: str, query_text: str) -> Iterator[str]:
         context = {}
         for source in selected_sources:
             yield emit_status(SOURCE_STATUS_LABELS[source])
-            context[source] = data_manager.fetch_source(source)
+            context[source] = data_manager.get_source(source)
 
         yield emit_status("Drafting response...")
 

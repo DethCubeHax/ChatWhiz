@@ -43,7 +43,7 @@ def get_context_stats():
     import json
 
     system_prompt = build_system_prompt()
-    sample_context = data_manager.fetch_sources(["resume", "work"])
+    sample_context = data_manager.get_sources(["resume", "work"])
     context = json.dumps(sample_context, indent=2)
     sample_prompt = (
         f"{system_prompt}\n\nMy information:\n\n{context}\n\n"
@@ -150,10 +150,18 @@ async def diagnostics_data_sync():
 
     for key in probe_results:
         if probe_results[key].get("ok"):
-            try:
-                data_manager.fetch_source(key)
-            except Exception as error:
-                probe_results[key]["cache_error"] = format_error(error)
+            probe_results[key]["cached_in_memory"] = key in data_manager.cache
+
+    if all(result.get("ok") for result in probe_results.values()):
+        try:
+            data_manager.load_all_sources(force=True)
+        except Exception as error:
+            return {
+                "ok": False,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                "sources": probe_results,
+                "cache_update_error": format_error(error),
+            }
 
     return {
         "ok": all(result.get("ok") for result in probe_results.values()),
@@ -184,10 +192,7 @@ async def diagnostics_gemini():
 
 @app.on_event("startup")
 async def startup_event():
-    try:
-        data_manager.warm_cache()
-    except Exception as error:
-        print(f"Startup cache warm failed (will fetch on demand): {error}")
+    data_manager.load_all_sources(force=True)
 
 
 @app.post("/query")
@@ -248,10 +253,12 @@ async def health_check():
         "status": "healthy" if summary.get("loaded") else "degraded",
         "timestamp": datetime.now().isoformat(),
         "cached_sources": summary.get("cached_sources", []),
+        "last_full_load": summary.get("last_full_load"),
         "data_available": summary.get("loaded", False),
         "resume_available": "resume" in data_manager.cache,
         "data_source": PORTFOLIO_DATA_BASE_URL,
         "agentic_routing": True,
+        "in_memory_cache": data_manager.is_fully_loaded(),
     }
 
 
