@@ -85,7 +85,7 @@ For personal questions beyond professional context, politely redirect to profess
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash')
+model = genai.GenerativeModel('gemini-3.5-flash')
 
 conversation_history = defaultdict(list)
 MAX_HISTORY = 5
