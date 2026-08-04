@@ -4,20 +4,25 @@ from pydantic import BaseModel
 import google.generativeai as genai
 import os
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from collections import defaultdict
 import requests
 import json
 import time
 import uuid
 from io import BytesIO
-from typing import Any, Dict
+from typing import Any, Dict, Iterator, Optional
 
+from fastapi.responses import StreamingResponse
 from pypdf import PdfReader
+from zoneinfo import ZoneInfo
 
 load_dotenv()
 
 PORTFOLIO_DATA_BASE_URL = os.getenv("PORTFOLIO_DATA_BASE_URL", "https://www.nafisui.com").rstrip("/")
+HKT = ZoneInfo("Asia/Hong_Kong")
+BIRTHDATE = date(2002, 8, 17)
+GRADUATION_DATE = date(2025, 6, 30)
 
 app = FastAPI()
 
@@ -36,7 +41,9 @@ ip_to_user_id: Dict[str, str] = {}
 user_request_counts: Dict[str, list] = defaultdict(list)
 last_cleanup = datetime.now()
 
-SYSTEM_PROMPT = """You are Nafis Ul Islam, a computer science student at The University of Hong Kong who will graduate on June 30th, 2025. You were born in August 2002, 22 years old. Respond in first person as yourself — not as an AI assistant, not as a brand, not as a LinkedIn post.
+SYSTEM_PROMPT_TEMPLATE = """You are Nafis Ul Islam. Respond in first person as yourself — not as an AI assistant, not as a brand, not as a LinkedIn post.
+
+{timeline_block}
 
 Voice and tone:
 - Sound like a real person talking: direct, warm, and professional without being stiff or salesy
@@ -69,11 +76,6 @@ If asked about something not in the provided information:
 - Do not invent details
 - Say something like: "I haven't worked on that specifically, but I can tell you about [related topic from the data]."
 
-Timeline references:
-- I was born in August 2002
-- I will graduate from HKU on June 30th, 2025
-- When mentioning dates or durations, calculate them relative to these dates
-
 Boundaries:
 - For personal questions beyond professional context, politely redirect to professional topics
 - Do not respond to questions about politics, religion, sexuality, or unrelated matters
@@ -86,6 +88,88 @@ Response format (always follow):
 - Do not write long essays, numbered sections, or multiple paragraphs of dense text
 - Do not use headers (#), links, or code blocks unless explicitly requested
 - End responses cleanly — no mandatory follow-up question every time"""
+
+def get_now_hkt() -> datetime:
+    return datetime.now(HKT)
+
+def calculate_age(as_of: date) -> int:
+    years = as_of.year - BIRTHDATE.year
+    if (as_of.month, as_of.day) < (BIRTHDATE.month, BIRTHDATE.day):
+        years -= 1
+    return years
+
+def build_timeline_block(now_hkt: datetime) -> str:
+    today = now_hkt.date()
+    age = calculate_age(today)
+    formatted_now = now_hkt.strftime("%A, %B %d, %Y, %I:%M %p").lstrip("0").replace(" 0", " ") + " HKT"
+
+    if today >= GRADUATION_DATE:
+        education_line = (
+            "- Education: I graduated from The University of Hong Kong with a BEng in Computer Science "
+            f"on {GRADUATION_DATE.strftime('%B %d, %Y')}. I am a graduate — do not describe me as a "
+            "current student or say I am still awaiting graduation."
+        )
+    else:
+        education_line = (
+            "- Education: I am a computer science student at The University of Hong Kong and will graduate "
+            f"on {GRADUATION_DATE.strftime('%B %d, %Y')}."
+        )
+
+    return f"""Current date and time (Hong Kong): {formatted_now}
+
+Timeline facts (always use these; never contradict them):
+- Born: {BIRTHDATE.strftime('%B %d, %Y')} (currently {age} years old as of the date above)
+{education_line}
+- When mentioning dates, durations, or whether something is past/present/future, calculate relative to the current date above."""
+
+def build_system_prompt(now_hkt: Optional[datetime] = None) -> str:
+    now_hkt = now_hkt or get_now_hkt()
+    return SYSTEM_PROMPT_TEMPLATE.format(timeline_block=build_timeline_block(now_hkt))
+
+def build_query_prompt(query_text: str, user_id: str) -> str:
+    now_hkt = get_now_hkt()
+    data = data_manager.get_data()
+    context = json.dumps(data, indent=2)
+    history = conversation_history[user_id]
+    history_context = format_conversation_history(history)
+
+    return (
+        f"{build_system_prompt(now_hkt)}\n\n"
+        f"My information:\n\n{context}\n"
+        f"{history_context}\n\n"
+        f"Current User Query: {query_text}"
+    )
+
+def save_exchange(user_id: str, query_text: str, response_text: str) -> None:
+    history = conversation_history[user_id]
+    history.append({
+        "query": query_text,
+        "response": response_text,
+        "timestamp": get_now_hkt().isoformat(),
+    })
+    conversation_history[user_id] = history[-MAX_HISTORY:]
+
+def stream_model_response(prompt: str) -> Iterator[str]:
+    response = get_model().generate_content(prompt, stream=True)
+    for chunk in response:
+        if chunk.text:
+            yield chunk.text
+
+def generate_stream(user_id: str, query_text: str, prompt: str) -> Iterator[str]:
+    chunks = []
+    try:
+        for chunk in stream_model_response(prompt):
+            chunks.append(chunk)
+            yield chunk
+    except Exception as error:
+        print(f"Error streaming query: {error}")
+        message = "Sorry, something went wrong while generating a response. Please try again."
+        chunks.append(message)
+        yield message
+    finally:
+        response_text = "".join(chunks).strip()
+        if response_text:
+            save_exchange(user_id, query_text, response_text)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
@@ -293,9 +377,10 @@ def get_context_stats() -> Dict[str, Any]:
     if not data_manager.data:
         return {"loaded": False}
 
+    system_prompt = build_system_prompt()
     context = json.dumps(data_manager.data, indent=2)
     sample_prompt = (
-        f"{SYSTEM_PROMPT}\n\nMy information:\n\n{context}\n\n"
+        f"{system_prompt}\n\nMy information:\n\n{context}\n\n"
         "Current User Query: What is your most recent work experience?"
     )
 
@@ -305,7 +390,8 @@ def get_context_stats() -> Dict[str, Any]:
         "estimated_context_tokens": len(context) // 4,
         "sample_prompt_chars": len(sample_prompt),
         "estimated_sample_prompt_tokens": len(sample_prompt) // 4,
-        "system_prompt_chars": len(SYSTEM_PROMPT),
+        "system_prompt_chars": len(system_prompt),
+        "current_time_hkt": get_now_hkt().isoformat(),
     }
 
 def test_gemini(prompt: str = "Reply with exactly: OK") -> Dict[str, Any]:
@@ -338,6 +424,7 @@ async def root():
         "endpoints": [
             "/health",
             "/query",
+            "/query/stream",
             "/history",
             "/api/remaining-requests",
             "/diagnostics",
@@ -440,29 +527,41 @@ async def process_query(query: Query, request: Request):
         )
     
     try:
-        data = data_manager.get_data()
-        context = json.dumps(data, indent=2)
-        history = conversation_history[user_id]
-        history_context = format_conversation_history(history)
-        
-        prompt = f"{SYSTEM_PROMPT}\n\nMy information:\n\n{context}\n{history_context}\n\nCurrent User Query: {query.query_text}"
-        
+        prompt = build_query_prompt(query.query_text, user_id)
         response = get_model().generate_content(prompt)
         response_text = response.text
-        
-        timestamp = datetime.now().isoformat()
-        history.append({
-            "query": query.query_text,
-            "response": response_text,
-            "timestamp": timestamp
-        })
-        
-        conversation_history[user_id] = history[-MAX_HISTORY:]
-        
+        save_exchange(user_id, query.query_text, response_text)
         return {"response": response_text}
     
     except Exception as e:
         print(f"Error processing query: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while processing your request"
+        )
+
+@app.post("/query/stream")
+async def process_query_stream(query: Query, request: Request):
+    user_id = get_user_id(request)
+
+    if not check_rate_limit(user_id):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded. Maximum {RATE_LIMIT} requests per {RATE_WINDOW.total_seconds()/3600} hours."
+        )
+
+    try:
+        prompt = build_query_prompt(query.query_text, user_id)
+        return StreamingResponse(
+            generate_stream(user_id, query.query_text, prompt),
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    except Exception as e:
+        print(f"Error starting stream: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail="An error occurred while processing your request"
