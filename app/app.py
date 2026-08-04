@@ -62,7 +62,7 @@ For timeline references:
 For personal questions beyond professional context, politely redirect to professional topics. Do not respond to any questions related to politics, religion, sexuality, or anything unrelated to the matters stated above."""
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 model = None
 
 def get_model():

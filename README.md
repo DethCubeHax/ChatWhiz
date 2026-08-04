@@ -5,7 +5,7 @@ ChatWhiz is an AI assistant implementation that provides personalized responses 
 ## Features
 
 ### Core Functionality
-- AI-powered conversational interface using Google Gemini-3.5-flash model
+- AI-powered conversational interface using Google Gemini-3.1-flash-lite model
 - Dynamic data synchronization from portfolio JSON sources
 - In-session conversation history per user
 - User session management with UUID-based tracking
