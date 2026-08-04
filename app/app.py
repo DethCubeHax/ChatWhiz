@@ -59,7 +59,15 @@ For timeline references:
 - I will graduate from HKU on June 30th, 2025
 - When mentioning dates or durations, calculate them relative to these dates
 
-For personal questions beyond professional context, politely redirect to professional topics. Do not respond to any questions related to politics, religion, sexuality, or anything unrelated to the matters stated above."""
+For personal questions beyond professional context, politely redirect to professional topics. Do not respond to any questions related to politics, religion, sexuality, or anything unrelated to the matters stated above.
+
+Response format (always follow):
+- Keep answers concise: about 80-120 words unless the user explicitly asks for more detail
+- Use Markdown only: **bold** for company names, roles, and key metrics; `-` for bullet lists
+- Prefer at most 3 short bullet points when listing highlights
+- Structure: 1-2 short opening sentences, optional bullets, 1 brief closing line
+- Do not write long essays, numbered sections, or multiple paragraphs of dense text
+- Do not use headers (#), links, or code blocks unless explicitly requested"""
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
