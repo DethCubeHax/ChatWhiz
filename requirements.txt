@@ -3,5 +3,6 @@ uvicorn
 python-dotenv
 google-generativeai
 requests
+pypdf
 pydantic
 python-multipart

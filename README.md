@@ -73,6 +73,7 @@ pip install -r requirements.txt
 ```bash
 # Create .env file with the following variables
 GEMINI_API_KEY=your_gemini_api_key
+PORTFOLIO_DATA_BASE_URL=https://www.nafisui.com
 ```
 
 ## Requirements
@@ -82,6 +83,7 @@ uvicorn
 python-dotenv
 google-generativeai
 requests
+pypdf
 pydantic
 python-multipart
 ```
@@ -98,10 +100,13 @@ uvicorn server:app --host 0.0.0.0 --port 8000
 ## Data Management
 
 ### Data Sources
-The system synchronizes data from three main JSON sources:
+The system synchronizes data from the deployed portfolio site (default: `https://www.nafisui.com`):
 - Projects: `/projects.json`
 - Work Experience: `/work.json`
 - Research: `/research.json`
+- Resume: `/Resume.pdf` (text extracted at sync time)
+
+Set `PORTFOLIO_DATA_BASE_URL` to override the site used for data sync.
 
 ### Data Update Mechanism
 - Automatic updates every 2 hours

@@ -8,12 +8,15 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import requests
 import json
-import threading
-import time
 import uuid
+from io import BytesIO
 from typing import Dict
 
+from pypdf import PdfReader
+
 load_dotenv()
+
+PORTFOLIO_DATA_BASE_URL = os.getenv("PORTFOLIO_DATA_BASE_URL", "https://www.nafisui.com").rstrip("/")
 
 app = FastAPI()
 
@@ -58,8 +61,19 @@ For timeline references:
 For personal questions beyond professional context, politely redirect to professional topics. Do not respond to any questions related to politics, religion, sexuality, or anything unrelated to the matters stated above."""
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-3.5-flash')
+model = None
+
+def get_model():
+    global model
+    if not GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="GEMINI_API_KEY is not configured"
+        )
+    if model is None:
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel("gemini-3.5-flash")
+    return model
 
 conversation_history = defaultdict(list)
 MAX_HISTORY = 5
@@ -69,41 +83,64 @@ class DataManager:
         self.data = None
         self.last_update = None
         self.update_interval = timedelta(hours=2)
+        self.base_url = PORTFOLIO_DATA_BASE_URL
         
         self.sources = {
-            "projects": "https://raw.githubusercontent.com/DethCubeHax/Portfolio-2.0/main/public/projects.json",
-            "work": "https://raw.githubusercontent.com/DethCubeHax/Portfolio-2.0/main/public/work.json",
-            "research": "https://raw.githubusercontent.com/DethCubeHax/Portfolio-2.0/main/public/research.json"
+            "projects": f"{self.base_url}/projects.json",
+            "work": f"{self.base_url}/work.json",
+            "research": f"{self.base_url}/research.json",
+            "resume": f"{self.base_url}/Resume.pdf",
         }
 
     def fetch_json(self, url):
-        response = requests.get(url)
+        response = requests.get(url, timeout=30)
         response.raise_for_status()
         return response.json()
 
+    def fetch_resume_text(self):
+        response = requests.get(self.sources["resume"], timeout=30)
+        response.raise_for_status()
+        reader = PdfReader(BytesIO(response.content))
+        pages = [page.extract_text() or "" for page in reader.pages]
+        return "\n".join(pages).strip()
+
     def update_data(self):
+        new_data = dict(self.data) if self.data else {}
+        errors = []
+
+        for key in ("projects", "work", "research"):
+            try:
+                new_data[key] = self.fetch_json(self.sources[key])
+            except Exception as e:
+                errors.append(f"{key}: {e}")
+                print(f"Error fetching {key}: {e}")
+
         try:
-            new_data = {
-                "projects": self.fetch_json(self.sources["projects"]),
-                "work": self.fetch_json(self.sources["work"]),
-                "research": self.fetch_json(self.sources["research"])
-            }
-            
+            new_data["resume"] = self.fetch_resume_text()
+        except Exception as e:
+            errors.append(f"resume: {e}")
+            print(f"Error fetching resume: {e}")
+
+        required_keys = ("projects", "work", "research")
+        if all(key in new_data for key in required_keys):
             if not self.data or new_data != self.data:
                 self.data = new_data
                 print(f"Data updated successfully at {datetime.now()}")
             else:
                 print(f"No changes detected at {datetime.now()}")
-            
             self.last_update = datetime.now()
-            
-        except Exception as e:
-            print(f"Error updating data: {str(e)}")
-            if not self.data:
-                raise
+            return
+
+        if errors:
+            print(f"Data update incomplete: {'; '.join(errors)}")
+        if not self.data:
+            raise RuntimeError(
+                "Unable to load portfolio data. "
+                + ("; ".join(errors) if errors else "No data sources available.")
+            )
 
     def get_data(self):
-        if not self.data or datetime.now() - self.last_update > self.update_interval:
+        if not self.data or not self.last_update or datetime.now() - self.last_update > self.update_interval:
             self.update_data()
         return self.data
 
@@ -159,20 +196,20 @@ def format_conversation_history(history):
         formatted += f"You: {conv['response']}\n"
     return formatted
 
+@app.get("/")
+async def root():
+    return {
+        "service": "ChatWhiz",
+        "status": "ok",
+        "endpoints": ["/health", "/query", "/history", "/api/remaining-requests"],
+    }
+
 @app.on_event("startup")
 async def startup_event():
-    data_manager.update_data()
-    
-    def run_periodic_updates():
-        while True:
-            time.sleep(7200)
-            try:
-                data_manager.update_data()
-            except Exception as e:
-                print(f"Periodic update failed: {str(e)}")
-    
-    update_thread = threading.Thread(target=run_periodic_updates, daemon=True)
-    update_thread.start()
+    try:
+        data_manager.update_data()
+    except Exception as e:
+        print(f"Startup data sync failed (will retry on first request): {e}")
 
 @app.post("/query")
 async def process_query(query: Query, request: Request):
@@ -192,7 +229,7 @@ async def process_query(query: Query, request: Request):
         
         prompt = f"{SYSTEM_PROMPT}\n\nMy information:\n\n{context}\n{history_context}\n\nCurrent User Query: {query.query_text}"
         
-        response = model.generate_content(prompt)
+        response = get_model().generate_content(prompt)
         response_text = response.text
         
         timestamp = datetime.now().isoformat()
@@ -228,11 +265,15 @@ async def clear_conversation_history(request: Request):
 @app.get("/health")
 async def health_check():
     last_update = data_manager.last_update.isoformat() if data_manager.last_update else None
+    data_loaded = bool(data_manager.data)
+    status = "healthy" if data_loaded else "degraded"
     return {
-        "status": "healthy",
+        "status": status,
         "timestamp": datetime.now().isoformat(),
         "last_data_update": last_update,
-        "data_available": bool(data_manager.data)
+        "data_available": data_loaded,
+        "resume_available": bool(data_manager.data and data_manager.data.get("resume")),
+        "data_source": PORTFOLIO_DATA_BASE_URL,
     }
 
 @app.get("/api/remaining-requests")
