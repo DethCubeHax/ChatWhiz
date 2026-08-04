@@ -8,9 +8,10 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import requests
 import json
+import time
 import uuid
 from io import BytesIO
-from typing import Dict
+from typing import Any, Dict
 
 from pypdf import PdfReader
 
@@ -61,6 +62,7 @@ For timeline references:
 For personal questions beyond professional context, politely redirect to professional topics. Do not respond to any questions related to politics, religion, sexuality, or anything unrelated to the matters stated above."""
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 model = None
 
 def get_model():
@@ -72,8 +74,11 @@ def get_model():
         )
     if model is None:
         genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel("gemini-3.5-flash")
+        model = genai.GenerativeModel(GEMINI_MODEL)
     return model
+
+def format_error(error: Exception) -> str:
+    return f"{type(error).__name__}: {error}"
 
 conversation_history = defaultdict(list)
 MAX_HISTORY = 5
@@ -144,6 +149,68 @@ class DataManager:
             self.update_data()
         return self.data
 
+    def get_summary(self) -> Dict[str, Any]:
+        if not self.data:
+            return {"loaded": False}
+
+        projects = self.data.get("projects", [])
+        work = self.data.get("work", [])
+        research = self.data.get("research", {})
+        resume = self.data.get("resume", "")
+
+        research_items = research.get("projects", []) if isinstance(research, dict) else research
+
+        return {
+            "loaded": True,
+            "last_update": self.last_update.isoformat() if self.last_update else None,
+            "sources": self.sources,
+            "counts": {
+                "projects": len(projects) if isinstance(projects, list) else 0,
+                "work": len(work) if isinstance(work, list) else 0,
+                "research": len(research_items) if isinstance(research_items, list) else 0,
+            },
+            "resume_chars": len(resume) if isinstance(resume, str) else 0,
+            "context_chars": len(json.dumps(self.data, indent=2)),
+        }
+
+    def probe_sources(self) -> Dict[str, Any]:
+        results = {}
+
+        for key, url in self.sources.items():
+            started = time.perf_counter()
+            try:
+                if key == "resume":
+                    text = self.fetch_resume_text()
+                    results[key] = {
+                        "ok": True,
+                        "url": url,
+                        "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                        "resume_chars": len(text),
+                    }
+                else:
+                    data = self.fetch_json(url)
+                    item_count = None
+                    if isinstance(data, list):
+                        item_count = len(data)
+                    elif isinstance(data, dict) and isinstance(data.get("projects"), list):
+                        item_count = len(data["projects"])
+
+                    results[key] = {
+                        "ok": True,
+                        "url": url,
+                        "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                        "items": item_count,
+                    }
+            except Exception as error:
+                results[key] = {
+                    "ok": False,
+                    "url": url,
+                    "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                    "error": format_error(error),
+                }
+
+        return results
+
 data_manager = DataManager()
 
 RATE_LIMIT = 50
@@ -196,12 +263,137 @@ def format_conversation_history(history):
         formatted += f"You: {conv['response']}\n"
     return formatted
 
+def get_context_stats() -> Dict[str, Any]:
+    if not data_manager.data:
+        return {"loaded": False}
+
+    context = json.dumps(data_manager.data, indent=2)
+    sample_prompt = (
+        f"{SYSTEM_PROMPT}\n\nMy information:\n\n{context}\n\n"
+        "Current User Query: What is your most recent work experience?"
+    )
+
+    return {
+        "loaded": True,
+        "context_chars": len(context),
+        "estimated_context_tokens": len(context) // 4,
+        "sample_prompt_chars": len(sample_prompt),
+        "estimated_sample_prompt_tokens": len(sample_prompt) // 4,
+        "system_prompt_chars": len(SYSTEM_PROMPT),
+    }
+
+def test_gemini(prompt: str = "Reply with exactly: OK") -> Dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        response = get_model().generate_content(prompt)
+        duration_ms = round((time.perf_counter() - started) * 1000, 1)
+        return {
+            "ok": True,
+            "model": GEMINI_MODEL,
+            "duration_ms": duration_ms,
+            "prompt": prompt,
+            "response": (response.text or "").strip(),
+        }
+    except Exception as error:
+        duration_ms = round((time.perf_counter() - started) * 1000, 1)
+        return {
+            "ok": False,
+            "model": GEMINI_MODEL,
+            "duration_ms": duration_ms,
+            "prompt": prompt,
+            "error": format_error(error),
+        }
+
 @app.get("/")
 async def root():
     return {
         "service": "ChatWhiz",
         "status": "ok",
-        "endpoints": ["/health", "/query", "/history", "/api/remaining-requests"],
+        "endpoints": [
+            "/health",
+            "/query",
+            "/history",
+            "/api/remaining-requests",
+            "/diagnostics",
+            "/diagnostics/config",
+            "/diagnostics/data",
+            "/diagnostics/data/sync",
+            "/diagnostics/context",
+            "/diagnostics/gemini",
+        ],
+    }
+
+@app.get("/diagnostics")
+async def diagnostics_index():
+    return {
+        "description": "Diagnostic endpoints for deployment testing",
+        "endpoints": {
+            "/diagnostics/config": "Environment and model configuration (no secrets)",
+            "/diagnostics/data": "Cached portfolio data summary",
+            "/diagnostics/data/sync": "Fetch each data source individually with timings",
+            "/diagnostics/context": "Prompt/context size estimates",
+            "/diagnostics/gemini": "Minimal Gemini API connectivity test",
+        },
+    }
+
+@app.get("/diagnostics/config")
+async def diagnostics_config():
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "portfolio_data_base_url": PORTFOLIO_DATA_BASE_URL,
+        "gemini_api_key_configured": bool(GEMINI_API_KEY),
+        "gemini_api_key_length": len(GEMINI_API_KEY) if GEMINI_API_KEY else 0,
+        "gemini_model": GEMINI_MODEL,
+        "rate_limit": RATE_LIMIT,
+        "rate_window_hours": RATE_WINDOW.total_seconds() / 3600,
+    }
+
+@app.get("/diagnostics/data")
+async def diagnostics_data():
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "summary": data_manager.get_summary(),
+    }
+
+@app.get("/diagnostics/data/sync")
+async def diagnostics_data_sync():
+    started = time.perf_counter()
+    probe_results = data_manager.probe_sources()
+    all_ok = all(result.get("ok") for result in probe_results.values())
+
+    if all_ok:
+        try:
+            data_manager.update_data()
+        except Exception as error:
+            return {
+                "ok": False,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                "sources": probe_results,
+                "cache_update_error": format_error(error),
+            }
+
+    return {
+        "ok": all_ok,
+        "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+        "sources": probe_results,
+        "summary": data_manager.get_summary(),
+    }
+
+@app.get("/diagnostics/context")
+async def diagnostics_context():
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "stats": get_context_stats(),
+    }
+
+@app.get("/diagnostics/gemini")
+async def diagnostics_gemini():
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="GEMINI_API_KEY is not configured")
+
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "result": test_gemini(),
     }
 
 @app.on_event("startup")
